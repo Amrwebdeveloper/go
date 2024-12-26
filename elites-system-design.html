@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>elite's-system-design</title>
+  <meta name="description" content="A workflow diagram showing navigation between web pages" />
+  <meta charset="UTF-8">
+  <script src="go.js"></script>
+  <link rel="stylesheet" href="style.css">
+
+  <script id="code">
+    function init() {
+
+      // var projectName = prompt("Please enter the project name:", "MyProject");
+      // if (projectName === null || projectName.trim() === "") {
+      //   projectName = "UnnamedProject"; // اسم افتراضي إذا لم يُدخل المستخدم اسمًا
+      // }
+
+      // window.projectName = projectName;
+
+      var $ = go.GraphObject.make;  // for conciseness in defining templates
+
+      var yellowgrad = $(go.Brush, "Linear", { 0: "rgb(254, 201, 0)", 1: "rgb(254, 162, 0)" });
+      var greengrad = $(go.Brush, "Linear", { 0: "#98FB98", 1: "#9ACD32" });
+      var bluegrad = $(go.Brush, "Linear", { 0: "#B0E0E6", 1: "#87CEEB" });
+      var blackgrad = $(go.Brush, "Linear", { 0: "#555555", 1: "#111111" });
+      var redgrad = $(go.Brush, "Linear", { 0: "#C45245", 1: "#871E1B" });
+      var whitegrad = $(go.Brush, "Linear", { 0: "#F0F8FF", 1: "#E6E6FA" });
+
+      var bigfont = "bold 13pt Helvetica, Arial, sans-serif";
+      var smallfont = "bold 11pt Helvetica, Arial, sans-serif";
+      var editableX = true;
+      // Common text styling
+      function textStyle() {
+        return {
+          margin: 6,
+          wrap: go.TextBlock.WrapFit,
+          textAlign: "center",
+          editable: editableX,
+          font: bigfont
+        }
+      }
+
+      myDiagram =
+        $(go.Diagram, "myDiagramDiv",
+          {
+            // have mouse wheel events zoom in and out instead of scroll up and down
+            "toolManager.mouseWheelBehavior": go.ToolManager.WheelZoom,
+            allowDrop: true,  // support drag-and-drop from the Palette
+            initialAutoScale: go.Diagram.Uniform,
+            "linkingTool.direction": go.LinkingTool.ForwardsOnly,
+            initialContentAlignment: go.Spot.Center,
+            layout: $(go.LayeredDigraphLayout, { isInitial: false, isOngoing: false, layerSpacing: 50 }),
+            "undoManager.isEnabled": true
+          });
+
+      // when the document is modified, add a "*" to the title and enable the "Save" button
+      myDiagram.addDiagramListener("Modified", function (e) {
+        var button = document.getElementById("SaveButton");
+        if (button) button.disabled = !myDiagram.isModified;
+        var idx = document.title.indexOf("*");
+        if (myDiagram.isModified) {
+          if (idx < 0) document.title += "*";
+        } else {
+          if (idx >= 0) document.title = document.title.substr(0, idx);
+        }
+      });
+
+      var defaultAdornment =
+        $(go.Adornment, "Spot",
+          $(go.Panel, "Auto",
+            $(go.Shape, { fill: null, stroke: "dodgerblue", strokeWidth: 4 }),
+            $(go.Placeholder)),
+          // the button to create a "next" node, at the top-right corner
+          $("Button",
+            {
+              alignment: go.Spot.TopRight,
+              click: addNodeAndLink
+            },  // this function is defined below
+            new go.Binding("visible", "", function (a) { return !a.diagram.isReadOnly; }).ofObject(),
+            $(go.Shape, "PlusLine", { desiredSize: new go.Size(6, 6) })
+          )
+        );
+
+      // define the Node template
+      myDiagram.nodeTemplate =
+        $(go.Node, "Auto",
+          { selectionAdornmentTemplate: defaultAdornment },
+          new go.Binding("location", "loc", go.Point.parse).makeTwoWay(go.Point.stringify),
+          // define the node's outer shape, which will surround the TextBlock
+          $(go.Shape, "Rectangle",
+            {
+              fill: yellowgrad, stroke: "black",
+              portId: "", fromLinkable: true, toLinkable: true, cursor: "pointer",
+              toEndSegmentLength: 50, fromEndSegmentLength: 40
+            }),
+          $(go.TextBlock, "Page",
+            {
+              margin: 6,
+              font: bigfont,
+              editable: editableX
+            },
+            new go.Binding("text", "text").makeTwoWay()));
+
+      myDiagram.nodeTemplateMap.add("Source",
+        $(go.Node, "Auto",
+          new go.Binding("location", "loc", go.Point.parse).makeTwoWay(go.Point.stringify),
+          $(go.Shape, "RoundedRectangle",
+            {
+              fill: bluegrad,
+              portId: "", fromLinkable: true, toLinkable: true, cursor: "pointer", fromEndSegmentLength: 40
+            }),
+          $(go.TextBlock, "Source", textStyle(),
+            new go.Binding("text", "text").makeTwoWay())
+        ));
+
+      myDiagram.nodeTemplateMap.add("DesiredEvent",
+        $(go.Node, "Auto",
+          new go.Binding("location", "loc", go.Point.parse).makeTwoWay(go.Point.stringify),
+          $(go.Shape, "RoundedRectangle",
+            { fill: greengrad, portId: "", fromLinkable: true, toLinkable: true, toEndSegmentLength: 50 }),
+          $(go.TextBlock, "Success!", textStyle(),
+            new go.Binding("text", "text").makeTwoWay())
+        ));
+
+      // Undesired events have a special adornment that allows adding additional "reasons"
+      var UndesiredEventAdornment =
+        $(go.Adornment, "Spot",
+          $(go.Panel, "Auto",
+            $(go.Shape, { fill: null, stroke: "dodgerblue", strokeWidth: 4 }),
+            $(go.Placeholder)),
+          // the button to create a "next" node, at the top-right corner
+          $("Button",
+            {
+              alignment: go.Spot.BottomRight,
+              click: addReason
+            },  // this function is defined below
+            new go.Binding("visible", "", function (a) { return !a.diagram.isReadOnly; }).ofObject(),
+            $(go.Shape, "TriangleDown", { desiredSize: new go.Size(10, 10) })
+          )
+        );
+
+      var reasonTemplate = $(go.Panel, "Horizontal",
+        $(go.TextBlock, "Idea",
+          {
+            margin: new go.Margin(4, 0, 0, 0),
+            maxSize: new go.Size(200, NaN),
+            wrap: go.TextBlock.WrapFit,
+            stroke: "whitesmoke",
+            editable: editableX,
+            font: smallfont
+          },
+          new go.Binding("text", "text").makeTwoWay())
+      );
+
+
+      myDiagram.nodeTemplateMap.add("UndesiredEvent",
+        $(go.Node, "Auto",
+          new go.Binding("location", "loc", go.Point.parse).makeTwoWay(go.Point.stringify),
+          { selectionAdornmentTemplate: UndesiredEventAdornment },
+          $(go.Shape, "RoundedRectangle",
+            { fill: blackgrad, portId: "", fromLinkable: true, toLinkable: true, toEndSegmentLength: 50 }),
+          $(go.Panel, "Vertical", { defaultAlignment: go.Spot.TopLeft },
+
+            $(go.TextBlock, "Details", textStyle(),
+              {
+                stroke: "whitesmoke",
+                minSize: new go.Size(80, NaN)
+              },
+              new go.Binding("text", "text").makeTwoWay()),
+
+            $(go.Panel, "Vertical",
+              {
+                defaultAlignment: go.Spot.TopLeft,
+                itemTemplate: reasonTemplate
+              },
+              new go.Binding("itemArray", "reasonsList").makeTwoWay()
+            )
+          )
+        ));
+
+
+
+      myDiagram.nodeTemplateMap.add("Comment",
+        $(go.Node, "Auto",
+          new go.Binding("location", "loc", go.Point.parse).makeTwoWay(go.Point.stringify),
+          $(go.Shape, "Rectangle",
+            { portId: "", fill: whitegrad, fromLinkable: true, toLinkable: true }),
+          $(go.TextBlock, "A comment",
+            {
+              margin: 9,
+              maxSize: new go.Size(200, NaN),
+              wrap: go.TextBlock.WrapFit,
+              editable: editableX,
+              font: smallfont
+            },
+            new go.Binding("text", "text").makeTwoWay())
+          // no ports, because no links are allowed to connect with a comment
+        ));
+
+      // clicking the button on an UndesiredEvent node inserts a new text object into the panel
+      function addReason(e, obj) {
+        var adorn = obj.part;
+        if (adorn === null) return;
+        e.handled = true;
+        var arr = adorn.adornedPart.data.reasonsList;
+        myDiagram.startTransaction("add a new Idea");
+        myDiagram.model.addArrayItem(arr, {});
+        myDiagram.commitTransaction("add a new Idea");
+      }
+
+      // clicking the button of a default node inserts a new node to the right of the selected node,
+      // and adds a link to that new node
+      function addNodeAndLink(e, obj) {
+        var adorn = obj.part;
+        if (adorn === null) return;
+        e.handled = true;
+        var diagram = adorn.diagram;
+        diagram.startTransaction("Add State");
+        // get the node data for which the user clicked the button
+        var fromNode = adorn.adornedPart;
+        var fromData = fromNode.data;
+        // create a new "State" data object, positioned off to the right of the adorned Node
+        var toData = { text: "new" };
+        var p = fromNode.location;
+        toData.loc = p.x + 200 + " " + p.y;  // the "loc" property is a string, not a Point object
+        // add the new node data to the model
+        var model = diagram.model;
+        model.addNodeData(toData);
+        // create a link data from the old node data to the new node data
+        var linkdata = {};
+        linkdata[model.linkFromKeyProperty] = model.getKeyForNodeData(fromData);
+        linkdata[model.linkToKeyProperty] = model.getKeyForNodeData(toData);
+        // and add the link data to the model
+        model.addLinkData(linkdata);
+        // select the new Node
+        var newnode = diagram.findNodeForData(toData);
+        diagram.select(newnode);
+        diagram.commitTransaction("Add State");
+      }
+
+      // replace the default Link template in the linkTemplateMap
+      myDiagram.linkTemplate =
+        $(go.Link,  // the whole link panel
+          new go.Binding("points").makeTwoWay(),
+          { curve: go.Link.Bezier, toShortLength: 15 },
+          new go.Binding("curviness", "curviness"),
+          $(go.Shape,  // the link shape
+            { stroke: "#2F4F4F", strokeWidth: 2.5 }),
+          $(go.Shape,  // the arrowhead
+            { toArrow: "kite", fill: "#2F4F4F", stroke: null, scale: 2 })
+        );
+
+      myDiagram.linkTemplateMap.add("Comment",
+        $(go.Link, { selectable: false },
+          $(go.Shape, { strokeWidth: 2, stroke: "darkgreen" })));
+
+
+      var palette =
+        $(go.Palette, "myPaletteDiv",  // create a new Palette in the HTML DIV element
+          {
+            // share the template map with the Palette
+            nodeTemplateMap: myDiagram.nodeTemplateMap,
+            autoScale: go.Diagram.Uniform  // everything always fits in viewport
+          });
+
+      palette.model.nodeDataArray = [
+        { category: "Source" },
+        {}, // default node
+        { category: "DesiredEvent" },
+        { category: "UndesiredEvent", reasonsList: [{}] },
+        { category: "Comment" }
+      ];
+
+      // read in the JSON-format data from the "textArea" element
+      load();
+      // layout();
+    }
+
+    function layout() {
+      myDiagram.layoutDiagram(true);
+    }
+
+    function save() {
+      document.getElementById("textArea").value = myDiagram.model.toJson();
+      myDiagram.isModified = false;
+      saveToLocalStorage();
+    }
+    function load() {
+      myDiagram.model = go.Model.fromJson(document.getElementById("textArea").value);
+    }
+  </script>
+</head>
+
+<body onload="init()">
+  <div id="sample">
+    <div style="width: 100%; display: flex; justify-content: space-between">
+      <div id="myPaletteDiv" style="width: 100px; margin-right: 2px; background-color: whitesmoke;opacity: 0;pointer-events: none;"></div>
+      <div id="myDiagramDiv" style="flex-grow: 1; height: 100vh;"></div>
+    </div>
+
+    <div id="buttons" style=" position: fixed; top: 50px; left: 110px; z-index: 9999; ">
+      <!-- <button id="SaveButton" onclick="save()">Save</button>
+      <button id="SaveButtonFile">Save File</button>
+      <button onclick="layout()">Layout</button> -->
+      <input type="file" id="fileInput" style="opacity: 0; pointer-events: none;" />
+    </div>
+    <textarea style="opacity: 0;"
+      id="textArea">{ "class": "go.GraphLinksModel",
+      "copiesArrays": true,
+      "copiesArrayObjects": true,
+      "nodeDataArray": [ 
+    {"category":"Source", "key":-1, "loc":"29.749598194856958 499.813172912598", "text":"Client side"},
+    {"category":"Source", "key":-2, "loc":"2.0000000000000124 68.81317291259799", "text":"Admin side"},
+    {"key":-3, "loc":"567.9039154197282 503.57459666175157", "text":"Home Page"},
+    {"text":"About Us", "loc":"795.37401582256 578.5745966617513", "key":-4},
+    {"text":"Doors gallery", "loc":"1018.3847046042976 578.5745966617518", "key":-5},
+    {"text":"Windows gallery", "loc":"1005.4718322898452 653.5745966617517", "key":-6},
+    {"text":"Contact Us", "loc":"788.143325820119 428.574596661752", "key":-7},
+    {"text":"Make Quota", "loc":"1024.6507415916012 378.57459666175134", "key":-8},
+    {"text":"Register", "loc":"403.6541036090503 328.57459666175157", "key":-9},
+    {"text":"Login", "loc":"414.7476552447925 403.57459666175134", "key":-10},
+    {"key":-11, "loc":"789.0952911521503 503.57459666175157", "text":"Categories"},
+    {"key":-12, "loc":"1036.2054748679702 503.5745966617522", "text":"Category"},
+    {"key":-13, "loc":"1233.555168166311 503.5745966617527", "text":"All Product"},
+    {"text":"Product details", "loc":"1417.4842682029303 503.5745966617527", "key":-14},
+    {"key":-15, "loc":"581.95491792217 378.574596661752", "text":"Wishlist"},
+    {"category":"DesiredEvent", "key":-16, "loc":"181.92535909498767 375.8131729125979", "text":"Authentication"},
+    {"key":-17, "loc":"571.8374557639677 71.5745966617518", "text":"Dashboard"},
+    {"category":"DesiredEvent", "key":-18, "loc":"183.92535909498818 68.8131729125981", "text":"Authentication"},
+    {"text":"Login", "loc":"416.7476552447938 71.57459666175146", "key":-19},
+    {"key":-20, "loc":"747.2880096580107 -53.42540333824857", "text":"Categories Controller"},
+    {"category":"UndesiredEvent", "reasonsList":[ {"text":"add \nupdate\ndelete"} ], "key":-21, "loc":"1033.0022176227214 -157.00000000000034"},
+    {"key":-22, "loc":"757.4126739646517 21.574596661751684", "text":"Account Controller"},
+    {"category":"UndesiredEvent", "reasonsList":[ {"text":"add \nupdate\ndelete"} ], "key":-23, "loc":"1033.0022176227242 -31.999999999999915"},
+    {"key":-24, "loc":"756.9303512717806 96.5745966617516", "text":"Product  Controller"},
+    {"category":"UndesiredEvent", "reasonsList":[ {"text":"add \nupdate\ndelete"} ], "key":-25, "loc":"1033.0022176227214 92.99999999999974"},
+    {"key":-26, "loc":"789.1786804343769 171.5745966617514", "text":"Clients List "},
+    {"category":"Comment", "key":-27, "loc":"1225.0554504539095 377.02028529090205", "text":"Download PDF"}
+     ],
+      "linkDataArray": [ 
+    {"from":-4, "to":-5, "points":[885.3858261252946,594.4580095951012,929.7187856182959,594.4580095951012,974.0517451112972,594.4580095951012,1018.3847046042985,594.4580095951012]},
+    {"from":-4, "to":-6, "points":[885.3858261252946,594.4580095951012,925.3858261252946,594.4580095951012,955.4718322898451,669.4580095951012,1005.4718322898451,669.4580095951012]},
+    {"from":-1, "to":-3, "points":[135.90391541972787,518.4580095951011,175.90391541972787,518.4580095951011,517.9039154197282,519.4580095951012,567.9039154197282,519.4580095951012]},
+    {"from":-11, "to":-12, "points":[891.6645507957047,519.4580095951012,939.8448588197931,519.4580095951012,988.0251668438817,519.4580095951012,1036.2054748679702,519.4580095951012]},
+    {"from":-13, "to":-14, "points":[1338.9845504905288,519.4580095951012,1365.1511230613296,519.4580095951012,1391.3176956321304,519.4580095951012,1417.4842682029312,519.4580095951012]},
+    {"from":-12, "to":-13, "points":[1124.3218078757827,519.4580095951012,1160.7329279726252,519.4580095951012,1197.1440480694675,519.4580095951012,1233.55516816631,519.4580095951012]},
+    {"from":-3, "to":-11, "points":[675.2880096580094,519.4580095951012,713.2237701560563,519.4580095951012,751.1595306541032,519.4580095951012,789.09529115215,519.4580095951012]},
+    {"from":-3, "to":-4, "points":[675.2880096580094,519.4580095951012,715.2880096580094,519.4580095951012,745.3740158225602,594.4580095951012,795.3740158225602,594.4580095951012]},
+    {"from":-3, "to":-7, "points":[675.2880096580094,519.4580095951012,715.2880096580094,519.4580095951012,738.1433258201188,444.4580095951012,788.1433258201188,444.4580095951012]},
+    {"from":-16, "to":-9, "points":[321.7495981948579,394.45800959510126,331.7495981948579,394.45800959510126,353.65410360905076,344.4580095951012,403.65410360905076,344.4580095951012]},
+    {"from":-16, "to":-10, "points":[321.7495981948579,394.45800959510126,331.7495981948579,394.45800959510126,364.74765524479295,419.4580095951012,414.74765524479295,419.4580095951012]},
+    {"from":-10, "to":-15, "points":[474.90585836979295,419.4580095951012,514.9058583697929,419.4580095951012,531.9549179221696,394.4580095951012,581.9549179221696,394.4580095951012]},
+    {"from":-15, "to":-8, "points":[661.237007155568,394.4580095951012,701.237007155568,394.4580095951012,735.2880096580094,394.4580095951012,840.3799209739274,394.4580095951012,945.4718322898453,394.4580095951012,974.650741591603,394.4580095951012,1024.650741591603,394.4580095951012]},
+    {"from":-7, "to":-8, "points":[892.616516127736,444.4580095951012,932.616516127736,444.4580095951012,974.650741591603,394.4580095951012,1024.650741591603,394.4580095951012]},
+    {"from":-15, "to":-7, "points":[661.237007155568,394.4580095951012,701.237007155568,394.4580095951012,738.1433258201188,444.4580095951012,788.1433258201188,444.4580095951012]},
+    {"from":-18, "to":-19, "points":[323.74959819485787,87.45800959510117,354.7489505448362,87.45800959510117,385.74830289481457,87.45800959510117,416.74765524479295,87.45800959510117]},
+    {"from":-2, "to":-18, "points":[113.92535909498763,87.45800959510117,137.25869242832093,87.45800959510117,160.59202576165418,87.45800959510117,183.92535909498747,87.45800959510117]},
+    {"from":-19, "to":-17, "points":[476.90585836979295,87.45800959510117,508.5497241678508,87.45800959510117,540.1935899659086,87.45800959510117,571.8374557639664,87.45800959510117]},
+    {"from":-17, "to":-20, "points":[675.3544693137711,87.45800959510117,715.3544693137711,87.45800959510117,697.2880096580094,-37.541990404898826,747.2880096580094,-37.541990404898826]},
+    {"from":-20, "to":-21, "points":[937.4718322898453,-37.541990404898826,977.4718322898453,-37.541990404898826,983.0022176227226,-112.54199040489883,1033.0022176227226,-112.54199040489883]},
+    {"from":-17, "to":-22, "points":[675.3544693137711,87.45800959510117,715.3544693137711,87.45800959510117,707.41267396465,37.458009595101174,757.41267396465,37.458009595101174]},
+    {"from":-22, "to":-23, "points":[927.3471679832047,37.458009595101174,967.3471679832047,37.458009595101174,983.0022176227226,12.458009595101174,1033.0022176227226,12.458009595101174]},
+    {"from":-17, "to":-24, "points":[675.3544693137711,87.45800959510117,715.3544693137711,87.45800959510117,706.9303512717789,112.45800959510115,756.9303512717789,112.45800959510115]},
+    {"from":-24, "to":-25, "points":[927.8294906760758,112.45800959510115,967.8294906760758,112.45800959510115,983.0022176227226,137.45800959510115,1033.0022176227226,137.45800959510115]},
+    {"from":-17, "to":-26, "points":[675.3544693137711,87.45800959510117,715.3544693137711,87.45800959510117,739.1786804343766,187.45800959510115,789.1786804343766,187.45800959510115]},
+    {"from":-8, "to":-27, "points":[1135.87654115215,394.4580095951012,1165.6028442527358,394.4580095951012,1195.3291473533218,394.45800959510126,1225.0554504539077,394.45800959510126]},
+    {"from":-26, "to":-8, "points":[895.5811615134782,187.45800959510112,935.5811615134782,187.45800959510112,974.650741591603,394.4580095951012,1024.650741591603,394.4580095951012]}
+     ]}</textarea>
+  </div>
+
+  <script>
+    function saveTextAsFile() {
+      var textToWrite = document.getElementById('textArea').value;  // استخدم القيمة من الـ textarea
+      var textFileAsBlob = new Blob([textToWrite], { type: 'application/json' });  // حدد نوع الملف كـ JSON
+      var fileNameToSaveAs = window.projectName + ".json"; // استخدام اسم المشروع كاسم للملف
+
+      var downloadLink = document.createElement("a");
+      downloadLink.download = fileNameToSaveAs;
+      downloadLink.innerHTML = "Download File";
+
+      if (window.webkitURL != null) {
+        downloadLink.href = window.webkitURL.createObjectURL(textFileAsBlob);
+      } else {
+        downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+        downloadLink.onclick = destroyClickedElement;
+        downloadLink.style.display = "none";
+        document.body.appendChild(downloadLink);
+      }
+
+      downloadLink.click();
+    }
+
+    var button = document.getElementById('SaveButtonFile');
+    button.addEventListener('click', saveTextAsFile);
+
+    function destroyClickedElement(event) {
+      // remove the link from the DOM
+      document.body.removeChild(event.target);
+    }
+
+    function saveToLocalStorage() {
+      var textArea = document.getElementById("textArea").value;
+      localStorage.setItem("map", textArea);
+    }
+
+
+    document.body.addEventListener('keydown', function (e) {
+      console.log(e.keyCode);
+      save()
+    }, true);
+
+
+    document.getElementById('fileInput').addEventListener('change', function (evt) {
+      var file = evt.target.files[0];
+      if (!file) {
+        return;
+      }
+
+      var reader = new FileReader();
+
+      reader.onload = function (e) {
+        var contents = e.target.result;
+        try {
+          // تحويل محتويات الملف إلى JSON
+          var json = JSON.parse(contents);
+          // تحميل البيانات في المخطط
+          myDiagram.model = go.Model.fromJson(json);
+        } catch (error) {
+          alert("Error: Invalid JSON file");
+        }
+      };
+
+      reader.readAsText(file);
+    }, false);
+
+    // منع فتح الملف عند إفلاته
+    document.body.addEventListener('dragover', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = 'copy'; // تغيير مؤشر الماوس
+    }, false);
+
+    document.body.addEventListener('drop', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      var file = event.dataTransfer.files[0];
+      if (!file) {
+        return;
+      }
+
+      var reader = new FileReader();
+
+      reader.onload = function (e) {
+        var contents = e.target.result;
+        try {
+          // تحويل محتويات الملف إلى JSON
+          var json = JSON.parse(contents);
+          // تحميل البيانات في المخطط
+          myDiagram.model = go.Model.fromJson(json);
+        } catch (error) {
+          alert("Error: Invalid JSON file");
+        }
+      };
+
+      reader.readAsText(file);
+    }, false);
+
+
+
+  </script>
+
+</body>
+
+</html>
